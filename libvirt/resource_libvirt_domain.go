@@ -709,6 +709,36 @@ func resourceLibvirtDomainUpdate(ctx context.Context, d *schema.ResourceData, me
 		}
 	}
 
+	disksCount := d.Get("disk.#").(int)
+	for i := 0; i < disksCount; i++ {
+		prefix := fmt.Sprintf("disk.%d", i)
+		if d.Get(prefix+".scsi").(bool) && d.HasChange(prefix+".wwn") {
+			oldValue, newValue := d.GetChange(prefix + ".wwn")
+			oldWWN := oldValue.(string)
+			newWWN := newValue.(string)
+			log.Printf("[DEBUG] changing WWN of SCSI disk #%d from <%s> to <%s>", i+1, oldWWN, newWWN)
+
+			domainDef, err := getXMLDomainDefFromLibvirt(virConn, domain)
+			if err != nil {
+				return diag.Errorf("error retrieving domain '%s' info: %s", domain.Name, err)
+			}
+			disk := domainDef.Devices.Disks[i]
+			disk.WWN = newWWN
+
+			data, err := disk.Marshal()
+			if err != nil {
+				return diag.Errorf("error serializing  disk #%d: %s", i+1, err)
+			}
+
+			err = virConn.DomainUpdateDeviceFlags(domain,
+				data,
+				libvirt.DomainDeviceModifyConfig|libvirt.DomainDeviceModifyCurrent|libvirt.DomainDeviceModifyLive|libvirt.DomainDeviceModifyForce)
+			if err != nil {
+				return diag.Errorf("error while updating SCSI disk #%d: %s", i+1, err)
+			}
+		}
+	}
+
 	if d.HasChange("autostart") {
 		var autoStart int32
 		if d.Get("autostart").(bool) {
